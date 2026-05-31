@@ -11,6 +11,16 @@ const {
 } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
+
+// ─── إنشاء سيرفر وهمي لتخطي مشكلة البورت في رندر ───
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is running online!\n');
+}).listen(PORT, () => {
+    console.log(`🌐 السيرفر الوهمي يعمل على بورت: ${PORT}`);
+});
 
 // إعداد البوت والـ Intents المتوافقة تماماً
 const client = new Client({
@@ -135,7 +145,6 @@ const commands = [
     }
 ];
 
-// تعديل برمي حاسم: إضافة async قبل السطر التالي ليعمل الـ await بالداخل بدون مشاكل
 client.once('ready', async () => {
     console.log("========================================");
     console.log(`🏦 تم تشغيل نظام السلف المركزي بنجاح (JS)!`);
@@ -160,32 +169,36 @@ client.on('interactionCreate', async interaction => {
         const { commandName } = interaction;
         const db = loadDb();
 
-        // 1. أمر المساعدة
+        // 1. أمر المساعدة الحساس للوقت
         if (commandName === 'help') {
+            // حل مشكلة الـ 3 ثواني عبر الرد المؤجل المخفي
+            await interaction.deferReply({ ephemeral: true });
+            
             const embed = new EmbedBuilder()
                 .setTitle('🏦 نظام السلف والائتمان المركزي')
                 .setDescription('أهلاً بك في نظام الضمان المالي المتقدم.\n\n💡 **إذا كنت ترغب بطلب سلف أو استدانة كريدات من شخص آخر، يرجى استخدام الأمر التالي:**\n👉 `/salafni`')
                 .setColor(0x0099FF);
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+                
+            return interaction.editReply({ embeds: [embed] });
         }
 
         // 2. أمر تقديم السلف (salafni)
         if (commandName === 'salafni') {
+            await interaction.deferReply({ ephemeral: true });
+            
             const amount = interaction.options.getInteger('المبلغ');
             const targetUser = interaction.options.getUser('الشخص');
             const reason = interaction.options.getString('السبب');
 
             if (getUserStatus(interaction.user.id, db) === "محروم") {
-                return interaction.reply({ content: "❌ عذراً، أنت مدرج في القائمة السوداء ومحروم من التسلف حالياً.", ephemeral: true });
+                return interaction.editReply({ content: "❌ عذراً، أنت مدرج في القائمة السوداء ومحروم من التسلف حالياً." });
             }
             if (getUserStatus(targetUser.id, db) === "محروم") {
-                return interaction.reply({ content: "❌ هذا الشخص محروم من التعاملات المالية حالياً.", ephemeral: true });
+                return interaction.editReply({ content: "❌ هذا الشخص محروم من التعاملات المالية حالياً." });
             }
             if (targetUser.id === interaction.user.id) {
-                return interaction.reply({ content: "❌ لا يمكنك طلب سلف من نفسك!", ephemeral: true });
+                return interaction.editReply({ content: "❌ لا يمكنك طلب سلف من نفسك!" });
             }
-
-            await interaction.reply({ content: `⏳ **جاري إرسال طلب السلف إلى ${targetUser} في الخاص...** يرجى انتظاره ليقوم بالقبول أو الرفض.`, ephemeral: true });
 
             const lenderEmbed = new EmbedBuilder()
                 .setTitle('📩 طلب سلف مالي جديد وارد إليك')
@@ -199,13 +212,15 @@ client.on('interactionCreate', async interaction => {
 
             try {
                 await targetUser.send({ embeds: [lenderEmbed], components: [row] });
+                await interaction.editReply({ content: `⏳ **تم إرسال طلب السلف إلى ${targetUser} في الخاص بنجاح...** يرجى انتظاره ليقوم بالقبول أو الرفض.` });
             } catch (e) {
-                await interaction.followUp({ content: `❌ تعذر إرسال الرسالة إلى ${targetUser} لأن حساب الخاص لديه مغلق!`, ephemeral: true });
+                await interaction.editReply({ content: `❌ تعذر إرسال الرسالة إلى ${targetUser} لأن حساب الخاص لديه مغلق!` });
             }
         }
 
         // 3. أمر إلغاء السلف
         if (commandName === 'إلغاء_السلف') {
+            await interaction.deferReply();
             const targetUser = interaction.options.getUser('الشخص');
             let loanId = null;
 
@@ -219,26 +234,31 @@ client.on('interactionCreate', async interaction => {
             }
 
             if (!loanId) {
-                return interaction.reply({ content: "❌ لا توجد معاملة سلف جارية وقائمة بينك وبين هذا الشخص حالياً.", ephemeral: true });
+                return interaction.editReply({ content: "❌ لا توجد معاملة سلف جارية وقائمة بينك وبين هذا الشخص حالياً." });
             }
 
             if (db.loans[loanId].lender_id === interaction.user.id) {
                 delete db.loans[loanId];
                 saveDb(db);
-                await interaction.reply({ content: "✅ تم إلغاء السلف المالي بينكما وإسقاطه فوراً ومباشرة من طرف المقرِض." });
+                await interaction.editReply({ content: "✅ تم إلغاء السلف المالي بينكما وإسقاطه فوراً ومباشرة من طرف المقرِض." });
                 try { await targetUser.send(`⚠️ أحببنا إشعارك بأن ${interaction.user} قام بإلغاء وإسقاط السلف المالي القائم بينكما رسمياً.`); } catch(e){}
                 return;
             }
 
-            await interaction.reply({ content: "⏳ تم إرسال طلب إلغاء السلف إلى الطرف الآخر للموافقة والتأكيد." });
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`cancel_yes_${loanId}_${interaction.user.id}`).setLabel('موافقة على الإلغاء').setStyle(ButtonStyle.Success)
             );
-            try { await targetUser.send({ content: `❓ يطلب ${interaction.user} إلغاء السلف القائم والمشترك بينكما، هل توافق؟`, components: [row] }); } catch(e){}
+            try { 
+                await targetUser.send({ content: `❓ يطلب ${interaction.user} إلغاء السلف القائم والمشترك بينكما، هل توافق؟`, components: [row] }); 
+                await interaction.editReply({ content: "⏳ تم إرسال طلب إلغاء السلف إلى الطرف الآخر للموافقة والتأكيد." });
+            } catch(e){
+                await interaction.editReply({ content: "❌ فشل إرسال طلب الإلغاء لأن خاص الطرف الآخر مغلق." });
+            }
         }
 
         // 4. أمر الدفع والتسديد
         if (commandName === 'الدفع') {
+            await interaction.deferReply();
             const targetUser = interaction.options.getUser('الشخص');
             let loanId = null;
 
@@ -251,20 +271,25 @@ client.on('interactionCreate', async interaction => {
             }
 
             if (!loanId) {
-                return interaction.reply({ content: "❌ لا يوجد سلف مسجل عليك لهذا الشخص لتدفعه.", ephemeral: true });
+                return interaction.editReply({ content: "❌ لا يوجد سلف مسجل عليك لهذا الشخص لتدفعه." });
             }
 
-            await interaction.reply({ content: "⏳ تم إرسال طلب تأكيد استلام الدفعة المالية للمقرض للتحقق والقبول." });
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId(`pay_yes_${loanId}_${interaction.user.id}`).setLabel('نعم، استلمت أموالي بالكامل').setStyle(ButtonStyle.Success),
                 new ButtonBuilder().setCustomId(`pay_no_${interaction.user.id}`).setLabel('لا، لم أستلم شيء').setStyle(ButtonStyle.Danger)
             );
-            try { await targetUser.send({ content: `🔔 يدّعي ${interaction.user} أنه قام بسداد كامل الدين المستحق لك، هل تؤكد استلام الكريدات؟`, components: [row] }); } catch(e){}
+            try { 
+                await targetUser.send({ content: `🔔 يدّعي ${interaction.user} أنه قام بسداد كامل الدين المستحق لك، هل تؤكد استلام الكريدات؟`, components: [row] }); 
+                await interaction.editReply({ content: "⏳ تم إرسال طلب تأكيد استلام الدفعة المالية للمقرض للتحقق والقبول." });
+            } catch(e){
+                await interaction.editReply({ content: "❌ تعذر إرسال الطلب لأن حساب الخاص للمقرض مغلق." });
+            }
         }
 
         // 5. أوامر الرقابة والإدارة
         if (commandName === 'الغاء_العامليه') {
-            if (!await checkAdminPermission(interaction)) return interaction.reply({ content: "❌ عذراً، أنت لا تملك رتب الإدارة في سيرفر الدعم المخولة لاستخدام هذا نظام.", ephemeral: true });
+            await interaction.deferReply({ ephemeral: true });
+            if (!await checkAdminPermission(interaction)) return interaction.editReply({ content: "❌ عذراً، أنت لا تملك رتب الإدارة المخولة لاستخدام هذا نظام." });
             const targetUser = interaction.options.getUser('اسم_الشخص');
             let found = false;
 
@@ -285,41 +310,44 @@ client.on('interactionCreate', async interaction => {
             }
             if (found) {
                 saveDb(db);
-                await interaction.reply({ content: `🚨 تم التدخل الإداري بنجاح وإيقاف السلف المتعلق بالعضو ${targetUser.username} بالكامل.` });
+                await interaction.editReply({ content: `🚨 تم التدخل الإداري بنجاح وإيقاف السلف المتعلق بالعضو ${targetUser.username} بالكامل.` });
             } else {
-                await interaction.reply({ content: "❌ لم يتم العثور على أي سلفيات جارية مسجلة تحت اسم هذا الحساب.", ephemeral: true });
+                await interaction.editReply({ content: "❌ لم يتم العثور على أي سلفيات جارية مسجلة تحت اسم هذا الحساب." });
             }
         }
 
         if (commandName === 'اشتكشاف') {
-            if (!await checkAdminPermission(interaction)) return interaction.reply({ content: "❌ عذراً، هذا الأمر مخصص للإدارة والدعم الفني فقط.", ephemeral: true });
+            await interaction.deferReply();
+            if (!await checkAdminPermission(interaction)) return interaction.editReply({ content: "❌ عذراً، هذا الأمر مخصص للإدارة والدعم الفني فقط." });
             const targetUser = interaction.options.getUser('اسم_الشخص');
             const status = getUserStatus(targetUser.id, db);
-            await interaction.reply({ content: `🔍 **تقرير الاستكشاف المالي:**\n👤 الحساب: ${targetUser}\n📊 التصنيف الحالي: **${status}**` });
+            await interaction.editReply({ content: `🔍 **تقرير الاستكشاف المالي:**\n👤 الحساب: ${targetUser}\n📊 التصنيف الحالي: **${status}**` });
         }
 
         if (commandName === 'محروم') {
-            if (!await checkAdminPermission(interaction)) return interaction.reply({ content: "❌ هذا الأمر مخصص للإدارة والدعم الفني فقط.", ephemeral: true });
+            await interaction.deferReply();
+            if (!await checkAdminPermission(interaction)) return interaction.editReply({ content: "❌ هذا الأمر مخصص للإدارة والدعم الفني فقط." });
             const targetUser = interaction.options.getUser('اسم_الشخص');
             if (!db.users[targetUser.id]) db.users[targetUser.id] = {};
             db.users[targetUser.id].status = "محروم";
             saveDb(db);
-            await interaction.reply({ content: `⛔ تم حظر وتغيير حالة ${targetUser} إلى **محروم من التسلوف** بنجاح.` });
+            await interaction.editReply({ content: `⛔ تم حظر وتغيير حالة ${targetUser} إلى **محروم من التسلوف** بنجاح.` });
         }
 
         if (commandName === 'الغاء_محروم') {
-            if (!await checkAdminPermission(interaction)) return interaction.reply({ content: "❌ هذا الأمر مخصص للإدارة والدعم الفني فقط.", ephemeral: true });
+            await interaction.deferReply();
+            if (!await checkAdminPermission(interaction)) return interaction.editReply({ content: "❌ هذا الأمر مخصص للإدارة والدعم الفني فقط." });
             const targetUser = interaction.options.getUser('اسم_الشخص');
             if (db.users[targetUser.id]) {
                 db.users[targetUser.id].status = "طبيعي";
                 saveDb(db);
             }
-            await interaction.reply({ content: `🟢 تم إلغاء حرمان ${targetUser} بنجاح وإعادته إلى التصنيف الطبيعي.` });
+            await interaction.editReply({ content: `🟢 تم إلغاء حرمان ${targetUser} بنجاح وإعادته إلى التصنيف الطبيعي.` });
             try { await targetUser.send("🟢 أهلاً بك، لقد تم رفع الحرمان المالي عن حسابك مجدداً من قبل الإدارة، يرجى عدم تكرار المشاكل السابقة منعاً للعقوبات."); } catch(e){}
         }
     }
 
-    // ─── معالجة الضغط على الأزرار (Buttons) ───
+    // ─── معالجة الضغط على الأزرار ───
     if (interaction.isButton()) {
         const db = loadDb();
         const customId = interaction.customId;
@@ -409,7 +437,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// ─── فحص الأقساط التلقائي (30 يوم) ───
+// ─── فحص الأقساط التلقائي ───
 async function cleanExpiredLoans() {
     const db = loadDb();
     const now = new Date();
